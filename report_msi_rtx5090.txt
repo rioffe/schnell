@@ -1,0 +1,33 @@
+🧾 Timing Report
+----------------------------------------
+Model loading         : 1.12 seconds
+Sub-batch 1  time     : 45.61 seconds
+Sub-batch 2  time     : 25.87 seconds
+Sub-batch 3  time     : 24.23 seconds
+Sub-batch 4  time     : 23.40 seconds
+Sub-batch 5  time     : 22.77 seconds
+Sub-batch 6  time     : 23.60 seconds
+Sub-batch 7  time     : 23.79 seconds
+Sub-batch 8  time     : 23.41 seconds
+Sub-batch 9  time     : 22.82 seconds
+Sub-batch 10 time     : 23.81 seconds
+Sub-batch 11 time     : 23.38 seconds
+Sub-batch 12 time     : 23.82 seconds
+Sub-batch 13 time     : 23.15 seconds
+Sub-batch 14 time     : 24.24 seconds
+Sub-batch 15 time     : 23.45 seconds
+Sub-batch 16 time     : 23.73 seconds
+Total generation time : 402.20 seconds
+Average per image     : 25.14 seconds
+
+📊 Memory Usage
+----------------------------------------
+Memory Allocated            : 9.13 MB
+Memory Reserved             : 24.00 MB
+Peak Memory Allocated       : 23085.63 MB
+----------------------------------------
+✅ Generated 16 image(s) in 16 sub-batches
+
+real    6m51.115s
+user    2m50.380s
+sys     3m46.791s
