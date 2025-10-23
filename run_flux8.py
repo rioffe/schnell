@@ -171,8 +171,16 @@ def save_json_report(args, timings, mem_info, ram_info, system_info, sub_batch_t
             "wait_between_sub_batches": args.wait_between_sub_batches,
             "output_pattern": args.output
         },
+        "compilation_settings": {
+            "enabled": args.compile,
+            "mode": args.compile_mode if args.compile else None,
+            "dynamic_shapes": args.compile_dynamic if args.compile else False,
+            "regional_compilation": args.compile_regional if args.compile else False
+        },
         "performance": {
             "model_loading_time": timings.get("Model loading", 0),
+            "compilation_time": timings.get("Compilation (regional)", timings.get("Compilation (full)", 0)),
+            "compilation_type": "regional" if "Compilation (regional)" in timings else ("full" if "Compilation (full)" in timings else None),
             "sub_batch_times": sub_batch_times,
             "total_generation_time": total_time,
             "average_time_per_image": total_time / args.batch_size,
@@ -184,7 +192,7 @@ def save_json_report(args, timings, mem_info, ram_info, system_info, sub_batch_t
             "ram_usage": ram_info
         }
     }
-    
+
     try:
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
@@ -205,6 +213,13 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Total number of images to generate")
     parser.add_argument("--sub-batch-size", type=int, default=1, help="Number of images to generate per sub-batch")
     parser.add_argument("--wait-between-sub-batches", type=float, default=0.0, help="Seconds to wait between sub-batches")
+    parser.add_argument("--compile", action="store_true", help="Enable torch.compile for transformer and VAE")
+    parser.add_argument("--compile-mode", type=str, choices=["default", "reduce-overhead", "max-autotune"],
+                        default="reduce-overhead", help="torch.compile mode")
+    parser.add_argument("--compile-dynamic", action="store_true",
+                        help="Enable dynamic shapes to avoid recompilation on shape changes")
+    parser.add_argument("--compile-regional", action="store_true",
+                        help="Use regional compilation (compile_repeated_blocks) for faster compile time")
     parser.add_argument("--json", type=str, help="Save performance data and system info to JSON file")
 
     args = parser.parse_args()
@@ -240,7 +255,41 @@ def main():
         pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell", torch_dtype=torch.bfloat16)
         pipe.to(device)
     timings["Model loading"] = time.time() - start
-    
+
+    # Apply torch.compile if requested
+    if args.compile:
+        compile_start = time.time()
+
+        # Check for macOS/MPS limitations
+        if device.type == "mps":
+            print("⚠️  WARNING: torch.compile on MPS (macOS) has limited support and may fall back to eager mode.")
+            print("           If you encounter errors, try running without --compile")
+
+        compile_kwargs = {
+            "mode": args.compile_mode,
+            "fullgraph": False,  # More flexible, better for MPS compatibility
+        }
+
+        if args.compile_dynamic:
+            compile_kwargs["dynamic"] = True
+            print("🔄 Enabling dynamic shapes to avoid recompilation on dimension changes...")
+
+        if args.compile_regional and hasattr(pipe.transformer, 'compile_repeated_blocks'):
+            # Regional compilation: compile repeated transformer blocks (7x faster compile time)
+            print("⚡ Using regional compilation (compile_repeated_blocks) for faster compile time...")
+            pipe.transformer.compile_repeated_blocks(**compile_kwargs)
+            timings["Compilation (regional)"] = time.time() - compile_start
+            print(f"✅ Regional compilation complete ({timings['Compilation (regional)']:.2f}s)")
+        else:
+            # Full model compilation
+            if args.compile_regional:
+                print("⚠️  WARNING: compile_repeated_blocks not available, falling back to full compilation")
+            print(f"⚡ Compiling transformer and VAE with torch.compile (mode={args.compile_mode})...")
+            pipe.transformer = torch.compile(pipe.transformer, **compile_kwargs)
+            pipe.vae.decode = torch.compile(pipe.vae.decode, **compile_kwargs)
+            timings["Compilation (full)"] = time.time() - compile_start
+            print(f"✅ Compilation complete ({timings['Compilation (full)']:.2f}s)")
+
     # Check RAM after model loading
     post_load_ram = get_ram_usage()
     print(f"💾 RAM after model load: {post_load_ram['used_ram_gb']} used ({post_load_ram['ram_percent']:.1f}%)")
@@ -342,7 +391,11 @@ def main():
     # Final console report
     print("\n🧾 Timing Report")
     print("-" * 40)
-    print(f"Model loading         : {timings['Model loading']:.2f} seconds")
+    print(f"Model loading         : {timings.get('Model loading', 0):.2f} seconds")
+    if "Compilation (regional)" in timings:
+        print(f"Compilation (regional): {timings['Compilation (regional)']:.2f} seconds")
+    if "Compilation (full)" in timings:
+        print(f"Compilation (full)    : {timings['Compilation (full)']:.2f} seconds")
     for idx, t in enumerate(sub_batch_times, 1):
         print(f"Sub-batch {idx:<2} time     : {t:.2f} seconds")
     print(f"Total generation time : {total_time:.2f} seconds")
